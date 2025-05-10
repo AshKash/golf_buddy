@@ -10,7 +10,7 @@ from urllib.parse import urljoin, urlparse
 import logging
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from html_cleaner import clean_html_content
+from html_fetcher import get_visible_rendered_html
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 OPENAI_MODEL = "gpt-4"
 OPENAI_TEMPERATURE = 0.2
 MAX_HTML_LENGTH = 40000
-MAX_SAMPLE_LENGTH = 50000
+MAX_SAMPLE_LENGTH = 5000
 USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
 REQUEST_TIMEOUT = 10
 MAX_RETRIES = 3
@@ -73,78 +73,38 @@ def fetch_and_extract_tee_times(url: str, follow_link: bool = True):
             click.echo(click.style("Invalid URL format. Please provide a valid URL starting with http:// or https://", fg='red'))
             return
 
-        # Set up session with retry mechanism
-        session = requests.Session()
-        retry_strategy = Retry(
-            total=MAX_RETRIES,
-            backoff_factor=BACKOFF_FACTOR,
-            status_forcelist=[429, 500, 502, 503, 504]
-        )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
-
-        # Step 1: Fetch the web page with proper headers
-        headers = {
-            'User-Agent': USER_AGENT,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-            'Cache-Control': 'max-age=0'
-        }
-
-        try:
-            response = session.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
-            response.raise_for_status()
-        except requests.exceptions.RequestException as e:
-            click.echo(click.style(f"😢 Error accessing the website: {str(e)}", fg='red'))
-            return
-        finally:
-            session.close()
-
-        # Debug: Check response content
-        click.echo(click.style(f"\nResponse status: {response.status_code}", fg='blue'))
-        click.echo(click.style(f"Response length: {len(response.text)} characters", fg='blue'))
-
-        # Get the raw HTML content and clean it
-        html_content = response.text
-        cleaned_html = clean_html_content(html_content)
+        # Get rendered HTML using Playwright
+        logger.info(f"Fetching rendered HTML from {url}")
+        rendered_html = get_visible_rendered_html(url)
         
-        if not cleaned_html:
+        if not rendered_html:
             click.echo(click.style("No content could be extracted from the page.", fg='red'))
             return
 
         # Debug: Show content lengths and sample
-        click.echo(click.style(f"Original HTML length: {len(html_content)} characters", fg='blue'))
-        click.echo(click.style(f"Cleaned HTML length: {len(cleaned_html)} characters", fg='blue'))
-        click.echo(click.style("\nSample of cleaned HTML:", fg='blue'))
-        click.echo(click.style(cleaned_html[:MAX_SAMPLE_LENGTH] + "...", fg='blue'))
+        click.echo(click.style(f"Rendered HTML length: {len(rendered_html)} characters", fg='blue'))
+        click.echo(click.style("\nSample of rendered HTML:", fg='blue'))
+        click.echo(click.style(rendered_html[:MAX_SAMPLE_LENGTH] + "...", fg='blue'))
 
         # Step 3: Prepare the prompt for GPT-4
         current_time = datetime.now().strftime("%I:%M %p")
         prompt = f"""
-You are helping a golfer find the next available tee time on a golf course website. You will be given cleaned HTML content to parse.
+You are helping a golfer find the next available tee time on a golf course website. You will be given cleaned Markdown content to parse.
 
 Current time: {current_time}
 
-Below is the cleaned HTML content of a golf-related website page:
-{cleaned_html[:MAX_HTML_LENGTH]}
+Below is the cleaned Markdown content of a golf-related website page:
+{rendered_html[:MAX_HTML_LENGTH]}
 
 Your task:
-1. Parse the HTML and look for the next available tee time on this page. If you find it, format it as:
+1. Parse the Markdown and look for the next available tee time on this page. If you find it, format it as:
    NEXT TEE TIME:
    - Time: [exact time]
    - Available for: [number of players]
    - Price: [if available]
    - Notes: [any important information]
 
-2. If you don't find a tee time on this page, analyze the HTML and find links that might lead to a tee time booking page. Look for:
+2. If you don't find a tee time on this page, analyze the Markdown and find links that might lead to a tee time booking page. Look for:
    - Links containing words like "tee time", "book", "reserve", "schedule", "golf", "play"
    - Links that appear to be booking buttons or navigation items
    - Links that are visible and prominently displayed or in the main navigation
@@ -221,10 +181,6 @@ Be very specific and concise. If you find a tee time, only show the next availab
                     click.echo("\n" + click.style("🔄 Following booking link...", fg='green'))
                     fetch_and_extract_tee_times(booking_url, follow_link=False)
 
-    except requests.exceptions.Timeout:
-        click.echo(click.style("⏰ Request timed out. The website might be slow or blocking our requests.", fg='red'))
-    except requests.exceptions.RequestException as e:
-        click.echo(click.style(f"Error accessing the website: {str(e)}", fg='red'))
     except Exception as e:
         click.echo(click.style(f"Error: {str(e)}", fg='red'))
 
