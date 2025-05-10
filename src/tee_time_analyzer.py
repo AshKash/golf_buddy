@@ -26,18 +26,6 @@ REQUEST_TIMEOUT = 10
 MAX_RETRIES = 3
 BACKOFF_FACTOR = 0.5
 
-# Browser settings
-BROWSER_ARGS = [
-    '--disable-dev-shm-usage',
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-gpu',
-    '--disable-software-rasterizer',
-    '--disable-extensions'
-]
-BROWSER_VIEWPORT = {"width": 1920, "height": 1080}
-BROWSER_TIMEOUT = 30000  # 30 seconds
-
 # Load environment variables
 load_dotenv()
 
@@ -87,13 +75,7 @@ def fetch_and_extract_tee_times(url: str, follow_link: bool = True):
 
         # Get rendered HTML using Playwright
         logger.info(f"Fetching rendered HTML from {url}")
-        rendered_html = get_visible_rendered_html(
-            url,
-            browser_args=BROWSER_ARGS,
-            viewport=BROWSER_VIEWPORT,
-            user_agent=USER_AGENT,
-            timeout=BROWSER_TIMEOUT
-        )
+        rendered_html = get_visible_rendered_html(url)
         
         if not rendered_html:
             click.echo(click.style("No content could be extracted from the page.", fg='red'))
