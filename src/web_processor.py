@@ -1,6 +1,6 @@
 # web_processor.py
 
-from playwright.sync_api import sync_playwright, Browser, Page
+from playwright.sync_api import sync_playwright, Browser, Page, TimeoutError
 import logging
 from html_to_md import html_to_markdown
 from typing import Optional
@@ -97,11 +97,35 @@ class WebProcessor:
             try:
                 # Navigate and wait for network idle
                 logger.info(f"Navigating to {url}")
+                
+                # Add request interception to log headers
+                page.on("request", lambda request: logger.info(f"Request headers: {request.headers}"))
+                page.on("response", lambda response: logger.info(f"Response status: {response.status}, headers: {response.headers}"))
+                
                 response = page.goto(url, wait_until='networkidle')
                 
-                if not response or not response.ok:
-                    logger.error(f"Failed to load page: {response.status if response else 'No response'}")
+                if not response:
+                    logger.error("No response received from page")
                     return ""
+                
+                if not response.ok:
+                    logger.error(f"Failed to load page: {response.status}")
+                    logger.error(f"Response headers: {response.headers}")
+                    logger.error(f"Response text: {response.text()}")
+                    
+                    # Check if it's a Cloudflare error
+                    if response.status == 403:
+                        logger.info("403 error detected, attempting to handle Cloudflare verification...")
+                        if not self.wait_for_cloudflare(page):
+                            logger.error("Failed to bypass Cloudflare verification")
+                            return ""
+                        # Try to get the content again after verification
+                        response = page.goto(url, wait_until='networkidle')
+                        if not response or not response.ok:
+                            logger.error("Still failed after Cloudflare verification")
+                            return ""
+                    else:
+                        return ""
                 
                 # Handle Cloudflare verification
                 if not self.wait_for_cloudflare(page):
@@ -161,3 +185,10 @@ def get_visible_rendered_html(url: str) -> str:
     """
     processor = get_processor()
     return processor.get_visible_rendered_html(url)
+
+def close_processor():
+    """Close the singleton WebProcessor instance."""
+    global _processor
+    if _processor:
+        _processor.close()
+        _processor = None
