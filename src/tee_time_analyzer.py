@@ -10,7 +10,7 @@ from urllib.parse import urljoin, urlparse
 import logging
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from web_processor import get_processor, get_visible_rendered_html
+from web_processor import get_visible_rendered_html, close_processor
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -67,7 +67,6 @@ def fetch_and_extract_tee_times(url: str, follow_link: bool = True):
     This function goes to a website (URL), reads it, and tries to find the next available tee time.
     If it doesn't find it, it suggests the most likely link to book tee times.
     """
-    processor = get_processor()
     try:
         # Validate URL first
         if not is_valid_url(url):
@@ -184,9 +183,6 @@ Be very specific and concise. If you find a tee time, only show the next availab
 
     except Exception as e:
         click.echo(click.style(f"Error: {str(e)}", fg='red'))
-    finally:
-        # Clean up processor resources
-        processor.close()
 
 @click.command()
 @click.option('--url', prompt='Enter the golf course website URL', help='URL of the golf course website to analyze')
@@ -194,6 +190,7 @@ Be very specific and concise. If you find a tee time, only show the next availab
 def main(url, follow):
     """Main function to test the tee time extraction."""
     fetch_and_extract_tee_times(url, follow)
+    close_processor()
 
 if __name__ == "__main__":
     main() 
