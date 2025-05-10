@@ -3,6 +3,7 @@
 import click
 from dotenv import load_dotenv
 from scraper import scrape_golf_course
+from ai_tee_time_extractor import fetch_and_extract_tee_times
 
 # Load environment variables
 load_dotenv()
@@ -20,7 +21,7 @@ def hello():
 @cli.command()
 @click.option('--url', prompt='Enter the golf course website URL', help='URL of the golf course website to scrape')
 def check_tee_times(url):
-    """Check available tee times from a golf course website."""
+    """Check available tee times from a golf course website (basic scraping)."""
     click.echo(f"Fetching tee times from {url}...")
     
     try:
@@ -31,6 +32,14 @@ def check_tee_times(url):
         click.echo("=" * 50)
     except Exception as e:
         click.echo(f"Error: {str(e)}", err=True)
+
+@cli.command()
+@click.option('--url', prompt='Enter the golf course website URL', help='URL of the golf course website to analyze')
+@click.option('--follow/--no-follow', default=True, help='Automatically follow booking links')
+def analyze_tee_times(url, follow):
+    """Use AI to analyze and extract tee time information from a golf course website."""
+    click.echo(f"Analyzing tee times from {url} using AI...")
+    fetch_and_extract_tee_times(url, follow)
 
 if __name__ == '__main__':
     cli() 
