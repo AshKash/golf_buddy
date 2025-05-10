@@ -78,6 +78,39 @@ class WebProcessor:
             logger.error(f"Error during Cloudflare verification: {str(e)}")
             return False
 
+    def wait_for_page_load(self, page: Page, timeout: int = 30) -> bool:
+        """
+        Wait for the page to load completely, including any redirects.
+        
+        Args:
+            page (Page): The Playwright page object
+            timeout (int): Maximum time to wait in seconds
+            
+        Returns:
+            bool: True if page loaded successfully, False otherwise
+        """
+        try:
+            logger.info("Waiting for page to load completely...")
+            start_time = time.time()
+            
+            while time.time() - start_time < timeout:
+                # Wait for network to be idle
+                page.wait_for_load_state('networkidle', timeout=5000)
+                
+                # Check if we're on a valid page
+                if page.url and not page.url.startswith("https://challenges.cloudflare.com"):
+                    logger.info(f"Page loaded successfully: {page.url}")
+                    return True
+                
+                time.sleep(1)
+            
+            logger.error("Page load timeout")
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error waiting for page load: {str(e)}")
+            return False
+
     def get_visible_rendered_html(self, url: str) -> str:
         """
         Use the initialized browser to fetch fully rendered HTML of a web page,
@@ -119,10 +152,15 @@ class WebProcessor:
                     
                     # Try to get the content again after verification
                     logger.info("Verification passed, reloading page...")
-                    response = page.goto(url, wait_until='networkidle')
-                    if not response or not response.ok:
-                        logger.error("Still failed after Cloudflare verification")
+                    response = page.goto(url, wait_until='domcontentloaded')
+                    if not response:
+                        logger.error("No response after verification")
                         return ""
+                
+                # Wait for the page to load completely
+                if not self.wait_for_page_load(page):
+                    logger.error("Failed to load page completely")
+                    return ""
                 
                 # Wait for any dynamic content
                 page.wait_for_timeout(2000)
