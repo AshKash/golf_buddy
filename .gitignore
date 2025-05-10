@@ -54,7 +54,3 @@ nosetests.xml
 coverage.xml
 *.cover
 .hypothesis/
-
-# Project specific
-x.html
-pwbs.py 
