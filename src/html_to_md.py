@@ -28,10 +28,10 @@ def html_to_markdown(html: str) -> str:
         converter.ignore_links = False  # Keep URLs in the output
         converter.ignore_images = True  # Skip images
         converter.body_width = 0        # Prevent line wrapping
-        converter.unicode_snob = True   # Use Unicode characters
+        converter.unicode_snob = False  # Use Unicode characters
         converter.ignore_emphasis = False  # Keep emphasis (bold, italic)
         converter.ignore_tables = False    # Keep tables
-        converter.ignore_anchors = True    # Skip anchor links
+        converter.ignore_anchors = False    # Keep anchor links
         
         # Convert HTML to Markdown
         markdown = converter.handle(html)
