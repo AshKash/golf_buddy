@@ -10,7 +10,7 @@ from urllib.parse import urljoin, urlparse
 import logging
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from html_fetcher import get_visible_rendered_html
+from web_processor import get_visible_rendered_html
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)

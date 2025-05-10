@@ -69,7 +69,7 @@ golf_buddy/
 ├── src/
 │   ├── main.py              # CLI entry point
 │   ├── tee_time_analyzer.py # AI-powered tee time analysis
-│   ├── html_fetcher.py      # Web page fetching and rendering
+│   ├── web_processor.py     # Web page fetching and markdown conversion
 │   ├── html_to_md.py        # HTML to Markdown conversion
 │   └── scraper.py           # Basic web scraping utilities
 ├── requirements.txt         # Project dependencies

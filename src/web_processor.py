@@ -1,4 +1,4 @@
-# html_fetcher.py
+# web_processor.py
 
 from playwright.sync_api import sync_playwright
 import logging
