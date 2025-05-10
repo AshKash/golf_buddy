@@ -94,15 +94,27 @@ class WebProcessor:
             start_time = time.time()
             
             while time.time() - start_time < timeout:
-                # Wait for network to be idle
-                page.wait_for_load_state('networkidle', timeout=5000)
-                
-                # Check if we're on a valid page
-                if page.url and not page.url.startswith("https://challenges.cloudflare.com"):
-                    logger.info(f"Page loaded successfully: {page.url}")
-                    return True
-                
-                time.sleep(1)
+                try:
+                    # Wait for network to be idle with a longer timeout
+                    page.wait_for_load_state('networkidle', timeout=10000)
+                    
+                    # Check if we're on a valid page
+                    if page.url and not page.url.startswith("https://challenges.cloudflare.com"):
+                        # Wait for any Turnstile iframe to be handled
+                        if page.url.startswith("https://cityofsunnyvale.ezlinksgolf.com"):
+                            logger.info("Waiting for Turnstile challenge...")
+                            time.sleep(5)  # Give time for Turnstile to complete
+                        
+                        logger.info(f"Page loaded successfully: {page.url}")
+                        return True
+                    
+                    time.sleep(1)
+                except TimeoutError:
+                    # If networkidle times out, check if we're on a valid page
+                    if page.url and not page.url.startswith("https://challenges.cloudflare.com"):
+                        logger.info(f"Page loaded (networkidle timeout): {page.url}")
+                        return True
+                    continue
             
             logger.error("Page load timeout")
             return False
