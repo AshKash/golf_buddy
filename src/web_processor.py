@@ -102,37 +102,29 @@ class WebProcessor:
                 page.on("request", lambda request: logger.info(f"Request headers: {request.headers}"))
                 page.on("response", lambda response: logger.info(f"Response status: {response.status}, headers: {response.headers}"))
                 
-                response = page.goto(url, wait_until='networkidle')
+                # First attempt to load the page
+                response = page.goto(url, wait_until='domcontentloaded')
                 
                 if not response:
                     logger.error("No response received from page")
                     return ""
                 
-                if not response.ok:
-                    logger.error(f"Failed to load page: {response.status}")
-                    logger.error(f"Response headers: {response.headers}")
-                    logger.error(f"Response text: {response.text()}")
+                # Check for Cloudflare challenge
+                if response.status == 403 or 'cf-mitigated' in response.headers:
+                    logger.info("Cloudflare challenge detected, waiting for verification...")
+                    # Wait for the challenge to complete
+                    if not self.wait_for_cloudflare(page):
+                        logger.error("Failed to bypass Cloudflare verification")
+                        return ""
                     
-                    # Check if it's a Cloudflare error
-                    if response.status == 403:
-                        logger.info("403 error detected, attempting to handle Cloudflare verification...")
-                        if not self.wait_for_cloudflare(page):
-                            logger.error("Failed to bypass Cloudflare verification")
-                            return ""
-                        # Try to get the content again after verification
-                        response = page.goto(url, wait_until='networkidle')
-                        if not response or not response.ok:
-                            logger.error("Still failed after Cloudflare verification")
-                            return ""
-                    else:
+                    # Try to get the content again after verification
+                    logger.info("Verification passed, reloading page...")
+                    response = page.goto(url, wait_until='networkidle')
+                    if not response or not response.ok:
+                        logger.error("Still failed after Cloudflare verification")
                         return ""
                 
-                # Handle Cloudflare verification
-                if not self.wait_for_cloudflare(page):
-                    logger.error("Failed to bypass Cloudflare verification")
-                    return ""
-                
-                # Wait a bit more for any dynamic content
+                # Wait for any dynamic content
                 page.wait_for_timeout(2000)
                 
                 # Get the rendered HTML
