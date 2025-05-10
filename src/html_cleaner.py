@@ -1,180 +1,274 @@
 import re
 import logging
-from bs4 import BeautifulSoup
-from nltk.util import clean_html
+from bs4 import BeautifulSoup, Comment
 
 # Set up logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Constants
-TAGS_TO_REMOVE = {'script', 'style', 'noscript', 'iframe', 'meta', 'link', 'img', 'svg'}
-TEMPLATE_TERMS = ['template', 'theme', 'framework', 'bootstrap', 'uikit']
-MEDIA_PATHS = [
-    '/templates/', '/themes/', '/framework/', '/vendor/', '/resources/', 
-    '/assets/', '/css/', '/js/', '/images/', '/img/', '/media/', 
-    '/components/', '/com_', '/mod_', '/plugins/', '/libraries/'
-]
-AD_TERMS = ['ad', 'analytics', 'tracking', 'cookie', 'banner', 'popup', 'modal']
-STYLE_ATTRIBUTES = [
-    'align', 'bgcolor', 'color', 'face', 'size', 'width', 'height', 
-    'margin', 'padding', 'border', 'background', 'font', 'text-align',
+# Constants for HTML cleaning
+UNWANTED_TAGS = {
+    'script', 'style', 'noscript', 'iframe', 'meta', 'link', 'head',
+    'svg', 'path', 'img', 'picture', 'source', 'video', 'audio',
+    'canvas', 'embed', 'object', 'param', 'track'
+}
+
+TEMPLATE_INDICATORS = {
+    'template', 'component', 'widget', 'module', 'section',
+    'header', 'footer', 'nav', 'sidebar', 'menu'
+}
+
+AD_INDICATORS = {
+    'ad', 'advertisement', 'banner', 'sponsored', 'promo',
+    'analytics', 'tracking', 'pixel', 'beacon'
+}
+
+STYLE_ATTRIBUTES = {
+    'style', 'class', 'id', 'color', 'font', 'size', 'width', 'height',
+    'margin', 'padding', 'border', 'background', 'position', 'display',
+    'float', 'clear', 'visibility', 'opacity', 'z-index', 'text-align',
     'font-family', 'font-size', 'font-weight', 'font-style', 'line-height',
-    'text-decoration', 'text-transform', 'letter-spacing', 'word-spacing'
-]
+    'text-decoration', 'text-transform', 'letter-spacing', 'word-spacing',
+    'vertical-align', 'white-space', 'overflow', 'text-overflow', 'box-shadow',
+    'transition', 'animation', 'transform', 'filter', 'backdrop-filter'
+}
 
-def remove_unwanted_tags(soup: BeautifulSoup) -> None:
-    """Remove unwanted HTML tags from the soup."""
-    for tag in soup.find_all(TAGS_TO_REMOVE):
-        try:
+# Add form state elements to remove
+FORM_STATE_ATTRIBUTES = {
+    '__VIEWSTATE', '__VIEWSTATEGENERATOR', '__EVENTVALIDATION',
+    '__EVENTTARGET', '__EVENTARGUMENT', '__LASTFOCUS',
+    '__VIEWSTATEENCRYPTED', '__PREVIOUSPAGE'
+}
+
+def remove_unwanted_tags(soup):
+    """Remove unwanted HTML tags."""
+    if not soup:
+        return soup
+    for tag in soup.find_all(UNWANTED_TAGS):
+        if tag is not None:
             tag.decompose()
-        except Exception as e:
-            logger.warning(f"Failed to remove tag {tag.name}: {str(e)}")
+    return soup
 
-def remove_template_elements(soup: BeautifulSoup) -> None:
-    """Remove elements related to templates, themes, or frameworks."""
+def remove_template_elements(soup):
+    """Remove template-related elements."""
+    if not soup:
+        return soup
+    for el in soup.find_all():
+        if el is None:
+            continue
+        # Check class and id for template indicators
+        classes = el.get('class', []) if hasattr(el, 'get') else []
+        el_id = el.get('id', '') if hasattr(el, 'get') else ''
+        
+        # Remove if element has template-related classes or IDs
+        if any(indicator in str(classes).lower() or indicator in str(el_id).lower() 
+               for indicator in TEMPLATE_INDICATORS):
+            el.decompose()
+    return soup
+
+def remove_ad_blocks(soup):
+    """Remove ad and analytics blocks."""
+    if not soup:
+        return soup
+    for el in soup.find_all():
+        if el is None or not hasattr(el, 'attrs'):
+            continue
+        # Check class, id, and data attributes for ad indicators
+        classes = el.get('class', []) if hasattr(el, 'get') else []
+        el_id = el.get('id', '') if hasattr(el, 'get') else ''
+        data_attrs = [attr for attr in el.attrs if attr.startswith('data-')] if hasattr(el, 'attrs') else []
+        
+        # Remove if element has ad-related indicators
+        if any(indicator in str(classes).lower() or 
+               indicator in str(el_id).lower() or
+               any(indicator in str(el.get(attr, '')).lower() for attr in data_attrs)
+               for indicator in AD_INDICATORS):
+            el.decompose()
+    return soup
+
+def remove_form_state(soup):
+    """Remove hidden form fields and other form state elements."""
+    if not soup:
+        return soup
+        
+    # Remove hidden input fields
+    for input_field in soup.find_all('input', type='hidden'):
+        if input_field is None:
+            continue
+            
+        # Check if it's a state-related field
+        field_id = input_field.get('id', '')
+        field_name = input_field.get('name', '')
+        
+        if any(state_term in str(field_id).lower() or state_term in str(field_name).lower() 
+               for state_term in FORM_STATE_ATTRIBUTES):
+            input_field.decompose()
+            
+    # Remove other form state elements
     for el in soup.find_all():
         if el is None:
             continue
             
-        try:
-            # Class or ID matches unwanted terms
-            if any(
-                attr_val
-                for attr in [el.get('class', []), el.get('id', '')]
-                if attr and any(term in str(attr).lower() for term in TEMPLATE_TERMS)
-            ):
-                el.decompose()
-                continue
+        # Check for state-related IDs or names
+        el_id = el.get('id', '')
+        el_name = el.get('name', '')
         
-            # Has template/theme specific attributes
-            if any(el.has_attr(attr) for attr in ['data-template', 'data-theme']):
-                el.decompose()
-                continue
-        
-            # Path-based removals from src/href
-            for attr in ['src', 'href']:
-                val = el.get(attr, '').lower()
-                if '?' in val and any(c.isdigit() for c in val.split('?')[1]):
-                    el.decompose()
-                    break
-                if any(path in val for path in MEDIA_PATHS):
-                    el.decompose()
-                    break
-        except Exception as e:
-            logger.warning(f"Failed to process element: {str(e)}")
-            continue
-
-def remove_ad_blocks(soup: BeautifulSoup) -> None:
-    """Remove ad and analytics blocks by class."""
-    for el in soup.find_all(class_=lambda x: x and any(term in str(x).lower() for term in AD_TERMS)):
-        try:
+        if any(state_term in str(el_id).lower() or state_term in str(el_name).lower() 
+               for state_term in FORM_STATE_ATTRIBUTES):
             el.decompose()
-        except Exception as e:
-            logger.warning(f"Failed to remove ad block: {str(e)}")
+            
+    return soup
 
-def strip_style_attributes(soup: BeautifulSoup) -> None:
-    """Strip attributes related to styles, layouts, accessibility, and roles."""
+def remove_inline_styles(soup):
+    """Remove all inline styles and style-related attributes."""
+    if not soup:
+        return soup
+        
+    # Remove all style tags and their contents
+    for style in soup.find_all('style'):
+        style.decompose()
+        
+    # Remove elements with display:none or visibility:hidden
     for el in soup.find_all():
         if el is None or not hasattr(el, 'attrs'):
             continue
             
-        try:
-            attrs_to_remove = []
-            for attr in list(el.attrs.keys()):
-                if (
-                    attr in {'style', 'class', 'id', 'role'} or
-                    attr.startswith('data-') or
-                    attr.startswith('aria-') or
-                    attr in STYLE_ATTRIBUTES or
-                    any(term in attr.lower() for term in ['style', 'color', 'font', 'size', 'width', 'height', 'margin', 'padding', 'border', 'background'])
-                ):
-                    attrs_to_remove.append(attr)
-            for attr in attrs_to_remove:
-                del el[attr]
-        
-            # Remove completely empty elements
-            if not el.get_text(strip=True):
-                el.decompose()
-        except Exception as e:
-            logger.warning(f"Failed to process element attributes: {str(e)}")
+        # Check style attribute for display:none or visibility:hidden
+        style = el.get('style', '')
+        if style and any(term in style.lower() for term in ['display:none', 'visibility:hidden']):
+            el.decompose()
             continue
-
-def remove_spacing_elements(soup: BeautifulSoup) -> None:
-    """Remove empty/spacing-only divs and spans."""
-    for el in soup.find_all(['div', 'span', 'p']):
+            
+        # Remove style attribute
+        if 'style' in el.attrs:
+            del el['style']
+            
+        # Remove all style-related attributes
+        attrs_to_remove = []
+        for attr in el.attrs:
+            if any(style_term in attr.lower() for style_term in STYLE_ATTRIBUTES):
+                attrs_to_remove.append(attr)
+                
+        for attr in attrs_to_remove:
+            del el[attr]
+            
+        # Remove elements that are purely for styling
+        if el.name in ['span', 'div'] and not el.get_text(strip=True):
+            el.decompose()
+            
+    # Remove elements with specific classes that are typically used for styling
+    styling_classes = {
+        'wsc_switcher_control_panel', 'wsc_switcher_control', 'personalBarContainer',
+        'menu-center', 'container', 'header'
+    }
+    
+    for el in soup.find_all(class_=True):
         if el is None:
             continue
             
-        try:
-            el_str = str(el).lower()
-            if not el.get_text(strip=True) or any(term in el_str for term in [
-                'margin', 'padding', 'spacing', 'font-size', 'text-align', 'display: block'
-            ]):
-                el.decompose()
-        except Exception as e:
-            logger.warning(f"Failed to process spacing element: {str(e)}")
-            continue
+        classes = el.get('class', [])
+        if any(styling_class in str(classes).lower() for styling_class in styling_classes):
+            el.decompose()
+            
+    return soup
 
-def clean_whitespace(soup: BeautifulSoup) -> str:
+def strip_style_attributes(soup):
+    """Strip style-related attributes from elements."""
+    if not soup:
+        return soup
+    for el in soup.find_all():
+        if el is None or not hasattr(el, 'attrs'):
+            continue
+            
+        # Remove style-related attributes
+        attrs_to_remove = []
+        for attr in el.attrs:
+            if any(style_term in attr.lower() for style_term in STYLE_ATTRIBUTES):
+                attrs_to_remove.append(attr)
+        
+        for attr in attrs_to_remove:
+            del el[attr]
+    return soup
+
+def remove_spacing_elements(soup):
+    """Remove empty or spacing-only elements."""
+    if not soup:
+        return soup
+    for el in soup.find_all(['span', 'div', 'p']):
+        if el is None:
+            continue
+        # Remove if element is empty or contains only whitespace
+        if not el.get_text(strip=True) if hasattr(el, 'get_text') else True:
+            el.decompose()
+            continue
+            
+        # Remove if element only contains spacing styles
+        style = el.get('style', '') if hasattr(el, 'get') else ''
+        if style and all(term in style.lower() for term in ['margin', 'padding', 'spacing']):
+            el.decompose()
+    return soup
+
+def clean_whitespace(soup):
     """Clean up whitespace and format HTML."""
+    if not soup:
+        return ''
     # Remove extra whitespace from text nodes
     for text in soup.find_all(text=True):
-        if text.parent.name not in ['pre', 'code']:  # Preserve whitespace in pre/code blocks
-            text.replace_with(' '.join(text.split()))
-
-    # Remove empty lines and normalize spacing
-    html_str = str(soup)
-    # Remove blank lines
-    html_str = '\n'.join(line for line in html_str.splitlines() if line.strip())
-    # Remove extra spaces between tags
-    html_str = re.sub(r'>\s+<', '><', html_str)
-    # Add newlines after major tags for readability
-    html_str = re.sub(r'(<[^/][^>]*>)', r'\1\n', html_str)
-    html_str = re.sub(r'(</[^>]*>)', r'\1\n', html_str)
-    # Remove multiple consecutive newlines
-    html_str = re.sub(r'\n\s*\n', '\n', html_str)
-    # Remove leading/trailing whitespace
-    html_str = html_str.strip()
+        if text is None or text.parent is None:
+            continue
+        if text.parent.name not in ['script', 'style']:
+            text.replace_with(text.strip())
     
-    return html_str
+    # Remove blank lines
+    for el in soup.find_all():
+        if el is None:
+            continue
+        if el.name in ['br', 'hr']:
+            el.decompose()
+    
+    # Normalize spacing between tags
+    html = str(soup)
+    html = re.sub(r'>\s+<', '><', html)
+    html = re.sub(r'\n\s*\n', '\n', html)
+    
+    return html
 
-def clean_html_content(html_content: str) -> str:
-    """
-    Cleans HTML content by removing scripts, styles, templates, ads, tracking,
-    and most presentational attributes. Returns simplified, readable HTML.
-    """
-    if not html_content or not isinstance(html_content, str):
-        logger.warning("Invalid HTML content provided")
+def clean_html_content(html_content):
+    """Clean HTML content by removing unwanted elements, styling, and formatting."""
+    if not html_content:
+        logger.warning("Empty HTML content provided")
         return ""
-
+        
     try:
-        # First pass: Use NLTK's clean_html for initial cleaning
-        try:
-            cleaned_html = clean_html(html_content)
-            if not cleaned_html:
-                logger.warning("NLTK clean_html returned empty result")
-                cleaned_html = html_content
-        except Exception as e:
-            logger.warning(f"NLTK clean_html failed: {str(e)}")
-            cleaned_html = html_content
+        # Parse HTML
+        soup = BeautifulSoup(html_content, 'html.parser')
+        if not soup:
+            logger.warning("BeautifulSoup parsing returned None")
+            return html_content
         
-        # Second pass: Use BeautifulSoup for more specific cleaning
-        try:
-            soup = BeautifulSoup(cleaned_html, 'html.parser')
-        except Exception as e:
-            logger.error(f"BeautifulSoup parsing failed: {str(e)}")
-            return cleaned_html
+        # Remove comments
+        for comment in soup.find_all(text=lambda text: isinstance(text, Comment)):
+            if comment is not None:
+                comment.extract()
         
-        # Apply all cleaning steps
-        remove_unwanted_tags(soup)
-        remove_template_elements(soup)
-        remove_ad_blocks(soup)
-        strip_style_attributes(soup)
-        remove_spacing_elements(soup)
+        # Remove all style tags first
+        for style in soup.find_all('style'):
+            style.decompose()
         
-        # Final formatting
-        return clean_whitespace(soup)
+        # Apply cleaning steps
+        soup = remove_unwanted_tags(soup)
+        soup = remove_template_elements(soup)
+        soup = remove_ad_blocks(soup)
+        soup = remove_form_state(soup)
+        soup = remove_inline_styles(soup)
+        soup = strip_style_attributes(soup)
+        soup = remove_spacing_elements(soup)
+        
+        # Clean whitespace and format
+        cleaned_html = clean_whitespace(soup)
+        
+        return cleaned_html
         
     except Exception as e:
-        logger.error(f"HTML cleanup failed: {str(e)}")
+        logger.error(f"Error cleaning HTML: {str(e)}")
         return html_content 
