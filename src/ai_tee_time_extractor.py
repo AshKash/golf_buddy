@@ -7,25 +7,14 @@ from dotenv import load_dotenv
 import click
 from datetime import datetime
 from urllib.parse import urljoin, urlparse
-import nltk
-from nltk.util import clean_html
 import logging
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from html_cleaner import clean_html_content
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Download required NLTK data if not already present
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    try:
-        nltk.download('punkt', quiet=True)
-    except Exception as e:
-        logger.error(f"Failed to download NLTK data: {str(e)}")
-        click.echo(click.style("Warning: NLTK data download failed. Some features may not work correctly.", fg='yellow'))
 
 # Constants
 OPENAI_MODEL = "gpt-4"
@@ -36,21 +25,6 @@ USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
 REQUEST_TIMEOUT = 10
 MAX_RETRIES = 3
 BACKOFF_FACTOR = 0.5
-
-# Template-related terms to remove
-TEMPLATE_TERMS = ['template', 'theme', 'framework', 'bootstrap', 'uikit']
-MEDIA_PATHS = [
-    '/templates/', '/themes/', '/framework/', '/vendor/', '/resources/', 
-    '/assets/', '/css/', '/js/', '/images/', '/img/', '/media/', 
-    '/components/', '/com_', '/mod_', '/plugins/', '/libraries/'
-]
-AD_TERMS = ['ad', 'analytics', 'tracking', 'cookie', 'banner', 'popup', 'modal']
-STYLE_ATTRIBUTES = [
-    'align', 'bgcolor', 'color', 'face', 'size', 'width', 'height', 
-    'margin', 'padding', 'border', 'background', 'font', 'text-align',
-    'font-family', 'font-size', 'font-weight', 'font-style', 'line-height',
-    'text-decoration', 'text-transform', 'letter-spacing', 'word-spacing'
-]
 
 # Load environment variables
 load_dotenv()
@@ -87,128 +61,6 @@ def make_absolute_url(base_url, link):
     except Exception as e:
         logger.error(f"URL conversion error: {str(e)}")
         return None
-
-def clean_html_content(html_content: str) -> str:
-    """
-    Cleans HTML content by removing scripts, styles, templates, ads, tracking,
-    and most presentational attributes. Returns simplified, readable HTML.
-    """
-    if not html_content or not isinstance(html_content, str):
-        logger.warning("Invalid HTML content provided")
-        return ""
-
-    try:
-        # First pass: Use NLTK's clean_html for initial cleaning
-        try:
-            cleaned_html = clean_html(html_content)
-            if not cleaned_html:
-                logger.warning("NLTK clean_html returned empty result")
-                cleaned_html = html_content
-        except Exception as e:
-            logger.warning(f"NLTK clean_html failed: {str(e)}")
-            cleaned_html = html_content
-        
-        # Second pass: Use BeautifulSoup for more specific cleaning
-        try:
-            soup = BeautifulSoup(cleaned_html, 'html.parser')
-        except Exception as e:
-            logger.error(f"BeautifulSoup parsing failed: {str(e)}")
-            return cleaned_html
-        
-        # Step 1: Remove unwanted tags entirely
-        TAGS_TO_REMOVE = {'script', 'style', 'noscript', 'iframe', 'meta', 'link', 'img', 'svg'}
-        for tag in soup.find_all(TAGS_TO_REMOVE):
-            try:
-                tag.decompose()
-            except Exception as e:
-                logger.warning(f"Failed to remove tag {tag.name}: {str(e)}")
-        
-        # Step 2: Remove elements related to templates, themes, or frameworks
-        for el in soup.find_all():
-            if el is None:
-                continue
-                
-            try:
-                # Class or ID matches unwanted terms
-                if any(
-                    attr_val
-                    for attr in [el.get('class', []), el.get('id', '')]
-                    if attr and any(term in str(attr).lower() for term in TEMPLATE_TERMS)
-                ):
-                    el.decompose()
-                    continue
-            
-                # Has template/theme specific attributes
-                if any(el.has_attr(attr) for attr in ['data-template', 'data-theme']):
-                    el.decompose()
-                    continue
-            
-                # Path-based removals from src/href
-                for attr in ['src', 'href']:
-                    val = el.get(attr, '').lower()
-                    if '?' in val and any(c.isdigit() for c in val.split('?')[1]):
-                        el.decompose()
-                        break
-                    if any(path in val for path in MEDIA_PATHS):
-                        el.decompose()
-                        break
-            except Exception as e:
-                logger.warning(f"Failed to process element: {str(e)}")
-                continue
-        
-        # Step 3: Remove ad and analytics blocks by class
-        for el in soup.find_all(class_=lambda x: x and any(term in str(x).lower() for term in AD_TERMS)):
-            try:
-                el.decompose()
-            except Exception as e:
-                logger.warning(f"Failed to remove ad block: {str(e)}")
-        
-        # Step 4: Strip attributes related to styles, layouts, accessibility, and roles
-        for el in soup.find_all():
-            if el is None or not hasattr(el, 'attrs'):
-                continue
-                
-            try:
-                attrs_to_remove = []
-                for attr in list(el.attrs.keys()):
-                    if (
-                        attr in {'style', 'class', 'id', 'role'} or
-                        attr.startswith('data-') or
-                        attr.startswith('aria-') or
-                        attr in STYLE_ATTRIBUTES or
-                        any(term in attr.lower() for term in ['style', 'color', 'font', 'size', 'width', 'height', 'margin', 'padding', 'border', 'background'])
-                    ):
-                        attrs_to_remove.append(attr)
-                for attr in attrs_to_remove:
-                    del el[attr]
-            
-                # Remove completely empty elements
-                if not el.get_text(strip=True):
-                    el.decompose()
-            except Exception as e:
-                logger.warning(f"Failed to process element attributes: {str(e)}")
-                continue
-        
-        # Step 5: Remove empty/spacing-only divs and spans
-        for el in soup.find_all(['div', 'span', 'p']):
-            if el is None:
-                continue
-                
-            try:
-                el_str = str(el).lower()
-                if not el.get_text(strip=True) or any(term in el_str for term in [
-                    'margin', 'padding', 'spacing', 'font-size', 'text-align', 'display: block'
-                ]):
-                    el.decompose()
-            except Exception as e:
-                logger.warning(f"Failed to process spacing element: {str(e)}")
-                continue
-        
-        return str(soup)
-        
-    except Exception as e:
-        logger.error(f"HTML cleanup failed: {str(e)}")
-        return html_content
 
 def fetch_and_extract_tee_times(url: str, follow_link: bool = True):
     """
@@ -295,7 +147,7 @@ Your task:
 2. If you don't find a tee time on this page, analyze the HTML and find links that might lead to a tee time booking page. Look for:
    - Links containing words like "tee time", "book", "reserve", "schedule", "golf", "play"
    - Links that appear to be booking buttons or navigation items
-   - Links that are prominently displayed or in the main navigation
+   - Links that are visible and prominently displayed or in the main navigation
    
    Extract the most relevant booking link and format it as:
    BOOKING LINK:
