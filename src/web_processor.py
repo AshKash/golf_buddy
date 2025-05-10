@@ -1,21 +1,37 @@
-# web_processor.py
+#!/usr/bin/env python3
+"""
+Web Processor - Handles web page fetching and processing.
+"""
 
 from playwright.sync_api import sync_playwright, Browser, Page, TimeoutError
 import logging
-from html_to_md import html_to_markdown
+from .html_to_md import html_to_markdown
 from typing import Optional
 import time
+import os
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 class WebProcessor:
-    def __init__(self):
-        """Initialize the WebProcessor with a Playwright browser instance."""
+    def __init__(self, headless: bool = None):
+        """
+        Initialize the WebProcessor with a Playwright browser instance.
+        
+        Args:
+            headless: Whether to run the browser in headless mode.
+                     If None, uses GOLF_BUDDY_HEADLESS env var or defaults to False.
+        """
+        if headless is None:
+            headless = os.environ.get('GOLF_BUDDY_HEADLESS', 'false').lower() == 'true'
+            
         self.playwright = sync_playwright().start()
         self.browser = self.playwright.chromium.launch(
-            headless=False,  # Set to False to bypass Cloudflare
+            headless=headless,  # Use configured headless mode
             args=[
                 '--disable-dev-shm-usage',
                 '--no-sandbox',
@@ -39,7 +55,7 @@ class WebProcessor:
                 get: () => undefined
             });
         """)
-        logger.info("WebProcessor initialized with browser instance")
+        logger.debug(f"WebProcessor initialized with browser instance (headless={headless})")
 
     def wait_for_cloudflare(self, page: Page, timeout: int = 30) -> bool:
         """
@@ -53,20 +69,16 @@ class WebProcessor:
             bool: True if verification passed, False otherwise
         """
         try:
-            # Wait for Cloudflare challenge to appear
-            logger.info("Waiting for Cloudflare verification...")
             start_time = time.time()
             
             while time.time() - start_time < timeout:
                 # Check if we're still on the challenge page
                 if page.url.startswith("https://challenges.cloudflare.com"):
-                    logger.info("Cloudflare challenge detected, waiting...")
                     time.sleep(2)
                     continue
                 
                 # Check if we've been redirected to the target page
                 if not page.url.startswith("https://challenges.cloudflare.com"):
-                    logger.info("Cloudflare verification passed")
                     return True
                 
                 time.sleep(1)
@@ -90,7 +102,6 @@ class WebProcessor:
             bool: True if page loaded successfully, False otherwise
         """
         try:
-            logger.info("Waiting for page to load completely...")
             start_time = time.time()
             
             while time.time() - start_time < timeout:
@@ -102,17 +113,14 @@ class WebProcessor:
                     if page.url and not page.url.startswith("https://challenges.cloudflare.com"):
                         # Wait for any Turnstile iframe to be handled
                         if page.url.startswith("https://cityofsunnyvale.ezlinksgolf.com"):
-                            logger.info("Waiting for Turnstile challenge...")
                             time.sleep(5)  # Give time for Turnstile to complete
                         
-                        logger.info(f"Page loaded successfully: {page.url}")
                         return True
                     
                     time.sleep(1)
                 except TimeoutError:
                     # If networkidle times out, check if we're on a valid page
                     if page.url and not page.url.startswith("https://challenges.cloudflare.com"):
-                        logger.info(f"Page loaded (networkidle timeout): {page.url}")
                         return True
                     continue
             
@@ -141,11 +149,7 @@ class WebProcessor:
             
             try:
                 # Navigate and wait for network idle
-                logger.info(f"Navigating to {url}")
-                
-                # Add request interception to log headers
-                page.on("request", lambda request: logger.info(f"Request headers: {request.headers}"))
-                page.on("response", lambda response: logger.info(f"Response status: {response.status}, headers: {response.headers}"))
+                logger.info(f"Fetching content from: {url}")
                 
                 # First attempt to load the page
                 response = page.goto(url, wait_until='domcontentloaded')
@@ -163,7 +167,6 @@ class WebProcessor:
                         return ""
                     
                     # Try to get the content again after verification
-                    logger.info("Verification passed, reloading page...")
                     response = page.goto(url, wait_until='domcontentloaded')
                     if not response:
                         logger.error("No response after verification")
@@ -179,11 +182,9 @@ class WebProcessor:
                 
                 # Get the rendered HTML
                 html = page.content()
-                logger.info(f"Successfully fetched HTML (length: {len(html)})")
                 
                 # Convert HTML to Markdown
                 markdown = html_to_markdown(html)
-                logger.info(f"Successfully converted to Markdown (length: {len(markdown)})")
                 return markdown
                 
             finally:
@@ -196,41 +197,47 @@ class WebProcessor:
 
     def close(self):
         """Clean up browser resources."""
-        logger.info("***Closing WebProcessor")
         try:
-            self.context.close()
-            self.browser.close()
-            self.playwright.stop()
-            logger.info("WebProcessor resources cleaned up")
+            if hasattr(self, 'context'):
+                self.context.close()
+            if hasattr(self, 'browser'):
+                self.browser.close()
+            if hasattr(self, 'playwright'):
+                self.playwright.stop()
         except Exception as e:
-            logger.error(f"Error during cleanup: {str(e)}")
+            logger.error(f"Error closing WebProcessor: {str(e)}")
 
-# Create a singleton instance
+# Global instance
 _processor = None
 
-def get_processor() -> WebProcessor:
-    """Get or create the singleton WebProcessor instance."""
-    global _processor
-    if _processor is None:
-        _processor = WebProcessor()
-    return _processor
-
-def get_visible_rendered_html(url: str) -> str:
+def get_processor(headless: bool = None) -> WebProcessor:
     """
-    Convenience function to get rendered HTML using the singleton processor.
+    Get or create the global WebProcessor instance.
     
     Args:
-        url (str): The URL to fetch and process
-        
-    Returns:
-        str: The converted Markdown content
+        headless: Whether to run the browser in headless mode.
+                 If None, uses GOLF_BUDDY_HEADLESS env var or defaults to True.
     """
-    processor = get_processor()
+    global _processor
+    if _processor is None:
+        _processor = WebProcessor(headless=headless)
+    return _processor
+
+def get_visible_rendered_html(url: str, headless: bool = None) -> str:
+    """
+    Get the visible rendered HTML of a web page.
+    
+    Args:
+        url: The URL to fetch and process
+        headless: Whether to run the browser in headless mode.
+                 If None, uses GOLF_BUDDY_HEADLESS env var or defaults to True.
+    """
+    processor = get_processor(headless=headless)
     return processor.get_visible_rendered_html(url)
 
 def close_processor():
-    """Close the singleton WebProcessor instance."""
+    """Close the global WebProcessor instance."""
     global _processor
-    if _processor:
+    if _processor is not None:
         _processor.close()
         _processor = None
