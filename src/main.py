@@ -3,7 +3,7 @@
 import click
 from dotenv import load_dotenv
 from scraper import scrape_golf_course
-from ai_tee_time_extractor import fetch_and_extract_tee_times
+from tee_time_analyzer import fetch_and_extract_tee_times
 
 # Load environment variables
 load_dotenv()
