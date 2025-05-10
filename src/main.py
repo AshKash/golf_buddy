@@ -16,15 +16,21 @@ from __future__ import annotations
 # Python standard library imports
 import logging
 from typing import Optional, List
+import os
+import sys
+
+# Add the src directory to the Python path when running directly
+if __name__ == '__main__':
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Third-party package imports
 import click
 from dotenv import load_dotenv
 
 # Local application imports
-from html_to_md import html_to_markdown
-from tee_time_analyzer import fetch_and_extract_tee_times
-from web_processor import get_visible_rendered_html
+from src.html_to_md import html_to_markdown
+from src.tee_time_analyzer import fetch_and_extract_tee_times
+from src.web_processor import get_visible_rendered_html
 
 # Load environment variables
 load_dotenv()
